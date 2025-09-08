@@ -1,48 +1,57 @@
+// server.js
 const express = require("express");
-const axios = require("axios");
+const fetch = require("node-fetch"); // make sure node-fetch v2 is installed
 
 const app = express();
-const PORT = 8080;
+const PORT = 3000;
 
-// Original IPTV provider URL
+// IPTV provider details
 const IPTV_URL =
   "http://smarts-on.to:2095/get.php?username=flixoza12549&password=1261901950&type=m3u_plus&output=ts";
 
-// Endpoint to fetch and serve playlist
 app.get("/playlist.m3u", async (req, res) => {
   try {
-    const response = await axios.get(IPTV_URL, { responseType: "text" });
+    const response = await fetch(IPTV_URL);
 
-    // Optionally modify playlist content (branding, renaming, etc.)
-    let playlist = response.data.replace(
-      /smarts-on\.to:2095/g,
-      req.headers.host // replace original domain with your server domain
-    );
+    if (!response.ok) {
+      return res.status(response.status).send("Error fetching playlist");
+    }
 
-    res.setHeader("Content-Type", "audio/x-mpegurl");
-    res.send(playlist);
-  } catch (error) {
-    console.error("Error fetching playlist:", error.message);
-    res.status(500).send("Failed to fetch playlist");
+    let data = await response.text();
+
+    // rewrite .ts links to go through proxy
+    data = data.replace(/http:\/\/[^\s]+/g, (url) => {
+      return `http://localhost:${PORT}/stream?url=${encodeURIComponent(url)}`;
+    });
+
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    res.send(data);
+  } catch (err) {
+    console.error("Playlist proxy error:", err);
+    res.status(500).send("Server error");
   }
 });
 
-// Proxy for TS segments and streams
-// Proxy for TS segments and streams
-// Proxy for TS segments and streams
-app.get(/^\/ts\/(.*)/, async (req, res) => {
-  const fullPath = req.params[0]; // regex capture group
+app.get("/stream", async (req, res) => {
+  const channelUrl = req.query.url;
+  if (!channelUrl) {
+    return res.status(400).send("Missing ?url parameter");
+  }
+
   try {
-    const url = `http://smarts-on.to:2095/${fullPath}`;
-    const response = await axios.get(url, { responseType: "stream" });
-    response.data.pipe(res);
-  } catch (error) {
-    console.error("Error proxying TS:", error.message);
-    res.status(500).send("Failed to proxy stream");
+    const response = await fetch(channelUrl);
+    if (!response.ok) {
+      return res.status(response.status).send("Error fetching stream");
+    }
+
+    res.setHeader("Content-Type", "video/MP2T");
+    response.body.pipe(res);
+  } catch (err) {
+    console.error("Stream proxy error:", err);
+    res.status(500).send("Stream proxy error");
   }
 });
+
 app.listen(PORT, () => {
-  console.log(
-    `✅ IPTV Proxy Server running at http://localhost:${PORT}/playlist.m3u`
-  );
+  console.log(`✅ Proxy running at http://localhost:${PORT}/playlist.m3u`);
 });
